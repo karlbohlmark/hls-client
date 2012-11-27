@@ -7,42 +7,24 @@ var commander = require('commander');
 var util = require('util');
 var Emitter = require('events').EventEmitter;
 var log = require('winston');
+var useragent = require('useragents');
 
 var program = require('commander')
   .usage('[options] <manifest-url>')
+  .option('--os <windows|osx>', 'Operating system', 'windows')
+  .option('--browser <firefox|chrome|ie>', 'Browser', 'chrome')
+  .option('--version <version>', 'Browser version number', 23)
+  .option('-c, --count <count>', 'Number of clients', 1)
   .option('-b, --bandwidth <n>', 'Bandwidth', 1160000)
   .parse(process.argv);
 
 if (!program.args.length) {
   program.help();
 }
-/*
-function fetchManifest (url, cb) {
-  log.info('FETCH:', url);
-  var parser = m3u8.createStream();
-  var req = request(url);
-  req.on('error', cb);
-  parser.on('m3u', cb.bind(null, null));
-  req.pipe(parser);
-}
 
-function onerror(err) {
-  console.log(err.code);
-}
-
-function reportIfError (cb) {
-  var f = function (err) {
-    if (err) throw err;
-    var args = [].slice.call(arguments, 1);
-    //console.log('report', args);
-    cb.apply(null, args);
-  };
-  f.name = cb.name + '_wrap';
-  return f;
-}
-*/
-function StreamingSession (bandwidth) {
+function StreamingSession (bandwidth, useragent) {
   this.bandwidth = bandwidth;
+  this.useragent = useragent;
   this.mediaSegmentQueue = [];
   this.manifestQueue = [];
   this.manifestQueue.emit = Emitter.prototype.emit;
@@ -61,7 +43,9 @@ function StreamingSession (bandwidth) {
 
 util.inherits(StreamingSession, Emitter);
 
-StreamingSession.prototype.request = request;
+StreamingSession.prototype.request = function (url) {
+  return request({url: url, headers: {'User-Agent': this.useragent}});
+};
 
 StreamingSession.prototype.bandwidthOfStreamItem = function (streamItem) {
   return streamItem.attributes.attributes.bandwidth;
@@ -121,7 +105,8 @@ StreamingSession.prototype.fetchMedia = function (url) {
   log.info('fetchMedia: ' + url);
   this.streamingState.url = url;
   this.streamingState.fetching = true;
-  var request = this.streamingState.request = this.request(url);
+  var request = this.request(url);
+  this.streamingState.request = request;
   request.on('end', function () {
     this.emit('mediasegment-done', url);
   }.bind(this));
@@ -162,9 +147,11 @@ StreamingSession.prototype.enqueManifest = function (url) {
 var url = program.args[0];
 var bandwidth = program.bandwidth;
 
-var session = new StreamingSession(bandwidth);
-session.enqueManifest(url);
-session.on('mediasegment-done', function (url) {
-  log.info('media segmented streamed: ' + url);
-});
-session.start();
+var info = log.info.bind(log);
+
+for(var i = 0; i < program.count; i++) {
+  var session = new StreamingSession(bandwidth, useragent(program.browser, program.os, program.version));
+  session.enqueManifest(url);
+  session.start();
+  session.on('mediasegment-done', info);
+}
