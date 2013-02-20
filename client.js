@@ -1,3 +1,4 @@
+var http = require('http');
 var m3u8 = require('m3u8');
 var fs   = require('fs');
 var path = require('path');
@@ -44,9 +45,8 @@ function StreamingSession (bandwidth, useragent) {
 util.inherits(StreamingSession, Emitter);
 
 StreamingSession.prototype.request = function (url) {
-  return request({url: url, headers: {'User-Agent': this.useragent}});
-};
-
+  return request({url: url, followRedirect: true, headers: {'User-Agent': this.useragent}});
+}
 StreamingSession.prototype.bandwidthOfStreamItem = function (streamItem) {
   return streamItem.attributes.attributes.bandwidth;
 };
@@ -69,13 +69,14 @@ StreamingSession.prototype.hasMultipleManifests = function (manifest) {
   return manifest.items.StreamItem && manifest.items.StreamItem.length;
 };
 
-StreamingSession.prototype.streamManifest = function (manifest) {
+StreamingSession.prototype.streamManifest = function (manifest, url) {
   if (this.hasMultipleManifests(manifest)) {
     var nextManifest = this.chooseStream(manifest.items.StreamItem, this.bandwidth);
     var manifestPath = Url.resolve(this.manifestFetchingState.url, nextManifest);
     this.fetchManifest(manifestPath);
   } else if (true) {
-    log.info('Start streaming media');
+    log.info('Start streaming media ' + url);
+
     manifest.items.PlaylistItem.forEach(function (item) {
       var absUrl = Url.resolve(this.manifestFetchingState.url, item.properties.uri);
       this.enqueMediaSegment(absUrl);
@@ -93,7 +94,7 @@ StreamingSession.prototype.enqueMediaSegment = function (url) {
 };
 
 StreamingSession.prototype.fetchNextMediaSegment = function () {
-  var segment = this.mediaSegmentQueue.pop();
+  var segment = this.mediaSegmentQueue.shift();
   if (segment) {
     this.fetchMedia(segment);
   } else {
@@ -107,8 +108,14 @@ StreamingSession.prototype.fetchMedia = function (url) {
   this.streamingState.fetching = true;
   var request = this.request(url);
   this.streamingState.request = request;
+  var starttime = new Date().valueOf();
   request.on('end', function () {
-    this.emit('mediasegment-done', url);
+    var wait = 5000 - (new Date().valueOf() - starttime);
+    // Wait at least 5 seconds before signaling that the segment is done
+    // TODO(karboh): Use duration from extinf tag instead
+    setTimeout(function (){
+      this.emit('mediasegment-done', url);
+    }.bind(this), wait);
   }.bind(this));
 };
 
@@ -133,9 +140,10 @@ StreamingSession.prototype.fetchManifest = function (manifestUrl) {
   this.manifestFetchingState.url = manifestUrl;
   this.manifestFetchingState.fetching = true;
   var parser = m3u8.createStream();
+  console.log('request ', manifestUrl);
   this.request(manifestUrl).pipe(parser);
   parser.on('m3u', function (m3u) {
-    this.emit('manifest', m3u);
+    this.emit('manifest', m3u, manifestUrl);
   }.bind(this));
 };
 
@@ -151,7 +159,15 @@ var info = log.info.bind(log);
 
 for(var i = 0; i < program.count; i++) {
   var session = new StreamingSession(bandwidth, useragent(program.browser, program.os, program.version));
-  session.enqueManifest(url);
-  session.start();
-  session.on('mediasegment-done', info);
+  var req = http.request(url);
+  req.on('error', function (er) {
+          console.log("error", er)
+  });
+  req.on('response', function(session, res){
+          var location = res.headers['location'];
+          console.log('location:', location);
+          session.enqueManifest(location);
+          session.start();
+  }.bind(null, session));
+  req.end();
 }
