@@ -110,7 +110,7 @@ StreamingSession.prototype.fetchMedia = function (url) {
   this.streamingState.request = request;
   var starttime = new Date().valueOf();
   request.on('end', function () {
-    var wait = 5000 - (new Date().valueOf() - starttime);
+    var wait = 10000 - (new Date().valueOf() - starttime);
     // Wait at least 5 seconds before signaling that the segment is done
     // TODO(karboh): Use duration from extinf tag instead
     setTimeout(function (){
