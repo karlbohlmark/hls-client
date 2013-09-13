@@ -50,7 +50,7 @@ StreamingSession.prototype.request = function (url, item) {
     var parts = item.properties.byteRange.split('@')
     var offset = parseInt(parts.pop())
     var length = parseInt(parts.pop())
-    req.headers.Range = offset + "-" + (offset + length)
+    req.headers.Range = "bytes=" + offset + "-" + (offset + length)
   }
 
   return request(req);
