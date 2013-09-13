@@ -44,8 +44,16 @@ function StreamingSession (bandwidth, useragent) {
 
 util.inherits(StreamingSession, Emitter);
 
-StreamingSession.prototype.request = function (url) {
-  return request({url: url, followRedirect: true, headers: {'User-Agent': this.useragent}});
+StreamingSession.prototype.request = function (url, item) {
+  var req = {url: url, followRedirect: true, agent: false, headers: {'User-Agent': this.useragent}}
+  if (item && item.properties && item.properties.byteRange) {
+    var parts = item.properties.byteRange.split('@')
+    var offset = parseInt(parts.pop())
+    var length = parseInt(parts.pop())
+    req.headers.Range = offset + "-" + (offset + length)
+  }
+
+  return request(req);
 }
 StreamingSession.prototype.bandwidthOfStreamItem = function (streamItem) {
   return streamItem.attributes.attributes.bandwidth;
@@ -79,15 +87,15 @@ StreamingSession.prototype.streamManifest = function (manifest, url) {
 
     manifest.items.PlaylistItem.forEach(function (item) {
       var absUrl = Url.resolve(this.manifestFetchingState.url, item.properties.uri);
-      this.enqueMediaSegment(absUrl);
+      this.enqueMediaSegment(absUrl, item);
     }.bind(this));
     //fetchManifest(manifestPath, reportIfError(streamFromManifest.bind(null, manifestPath)));
   }
 };
 
-StreamingSession.prototype.enqueMediaSegment = function (url) {
+StreamingSession.prototype.enqueMediaSegment = function (url, item) {
   log.info('enqueMediaSegment: ' + url);
-  this.mediaSegmentQueue.push(url);
+  this.mediaSegmentQueue.push({url: url, item: item});
   if (!this.streamingState.fetching) {
     this.fetchNextMediaSegment();
   }
@@ -102,15 +110,16 @@ StreamingSession.prototype.fetchNextMediaSegment = function () {
   }
 };
 
-StreamingSession.prototype.fetchMedia = function (url) {
+StreamingSession.prototype.fetchMedia = function (mediaSegment) {
+  var url = mediaSegment.url
   log.info('fetchMedia: ' + url);
   this.streamingState.url = url;
   this.streamingState.fetching = true;
-  var request = this.request(url);
+  var request = this.request(url, mediaSegment.item);
   this.streamingState.request = request;
   var starttime = new Date().valueOf();
   request.on('end', function () {
-    var wait = 10000 - (new Date().valueOf() - starttime);
+    var wait = 0;//10000 - (new Date().valueOf() - starttime);
     // Wait at least 5 seconds before signaling that the segment is done
     // TODO(karboh): Use duration from extinf tag instead
     setTimeout(function (){
@@ -140,7 +149,6 @@ StreamingSession.prototype.fetchManifest = function (manifestUrl) {
   this.manifestFetchingState.url = manifestUrl;
   this.manifestFetchingState.fetching = true;
   var parser = m3u8.createStream();
-  console.log('request ', manifestUrl);
   this.request(manifestUrl).pipe(parser);
   parser.on('m3u', function (m3u) {
     this.emit('manifest', m3u, manifestUrl);
@@ -148,7 +156,7 @@ StreamingSession.prototype.fetchManifest = function (manifestUrl) {
 };
 
 StreamingSession.prototype.enqueManifest = function (url) {
-  log.info('enqueue', url);
+  //log.info('enqueue', url);
   this.manifestQueue.push({url: url});
 };
 
@@ -159,15 +167,6 @@ var info = log.info.bind(log);
 
 for(var i = 0; i < program.count; i++) {
   var session = new StreamingSession(bandwidth, useragent(program.browser, program.os, program.version));
-  var req = http.request(url);
-  req.on('error', function (er) {
-          console.log("error", er)
-  });
-  req.on('response', function(session, res){
-          var location = res.headers['location'];
-          console.log('location:', location);
-          session.enqueManifest(location);
-          session.start();
-  }.bind(null, session));
-  req.end();
+  session.enqueManifest(url);
+  session.start();
 }
